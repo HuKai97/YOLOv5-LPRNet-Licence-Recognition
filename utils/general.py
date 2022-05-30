@@ -10,7 +10,7 @@ import time
 from contextlib import contextmanager
 from copy import copy
 from pathlib import Path
-
+import re           # 用来匹配字符串（动态、模糊）的模块
 import cv2
 import matplotlib
 import matplotlib.pyplot as plt
@@ -21,6 +21,8 @@ import yaml
 from scipy.cluster.vq import kmeans
 from scipy.signal import butter, filtfilt
 from tqdm import tqdm
+import pkg_resources as pkg  # 用于查找, 自省, 激活和使用已安装的Python发行版
+from subprocess import check_output  # 创建一个子进程再命令行执行..., 最后返回执行结果(文件)
 
 from utils.google_utils import gsutil_getsize
 from utils.torch_utils import init_seeds as init_torch_seeds
@@ -535,7 +537,7 @@ def compute_loss(p, targets, model):  # predictions, targets, model
 
         lobj += BCEobj(pi[..., 4], tobj) * balance[i]  # obj loss
 
-    s = 3 / np  # output count scaling
+    s = 3 / np  # rec_result count scaling
     lbox *= h['giou'] * s
     lobj *= h['obj'] * s * (1.4 if np == 4 else 1.)
     lcls *= h['cls'] * s
@@ -747,8 +749,8 @@ def crop_images_random(path='../images/', scale=0.50):  # from utils.general imp
 def coco_single_class_labels(path='../coco/labels/train2014/', label_class=43):
     # Makes single-class coco datasets. from utils.general import *; coco_single_class_labels()
     if os.path.exists('new/'):
-        shutil.rmtree('new/')  # delete output folder
-    os.makedirs('new/')  # make new output folder
+        shutil.rmtree('new/')  # delete rec_result folder
+    os.makedirs('new/')  # make new rec_result folder
     os.makedirs('new/labels/')
     os.makedirs('new/images/')
     for file in tqdm(sorted(glob.glob('%s/*.*' % path))):
@@ -946,7 +948,7 @@ def fitness(x):
 
 
 def output_to_target(output, width, height):
-    # Convert model output to target format [batch_id, class_id, x, y, w, h, conf]
+    # Convert model rec_result to target format [batch_id, class_id, x, y, w, h, conf]
     if isinstance(output, torch.Tensor):
         output = output.cpu().numpy()
 
@@ -1029,7 +1031,7 @@ def plot_wh_methods():  # from utils.general import *; plot_wh_methods()
     plt.xlim(left=-4, right=4)
     plt.ylim(bottom=0, top=6)
     plt.xlabel('input')
-    plt.ylabel('output')
+    plt.ylabel('rec_result')
     plt.grid()
     plt.legend()
     fig.tight_layout()
@@ -1062,7 +1064,7 @@ def plot_images(images, targets, paths=None, fname='images.jpg', names=None, max
         h = math.ceil(scale_factor * h)
         w = math.ceil(scale_factor * w)
 
-    # Empty array for output
+    # Empty array for rec_result
     mosaic = np.full((int(ns * h), int(ns * w), 3), 255, dtype=np.uint8)
 
     # Fix class - colour map
@@ -1142,6 +1144,225 @@ def plot_lr_scheduler(optimizer, scheduler, epochs=300, save_dir=''):
     plt.tight_layout()
     plt.savefig(Path(save_dir) / 'LR.png', dpi=200)
 
+def increment_path(path, exist_ok=False, sep='', mkdir=False):
+    """这是个用处特别广泛的函数 train.py、detect.py、test.py等都会用到
+    递增路径 如 run/train/exp --> runs/train/exp{sep}0, runs/exp{sep}1 etc.
+    :params path: window path   run/train/exp
+    :params exist_ok: False
+    :params sep: exp文件名的后缀  默认''
+    :params mkdir: 是否在这里创建dir  False
+    """
+    path = Path(path)  # string/win路径 -> win路径
+    # 如果该文件夹已经存在 则将路径run/train/exp修改为 runs/train/exp1
+    if path.exists() and not exist_ok:
+        # path.suffix 得到路径path的后缀  ''
+        suffix = path.suffix
+        # .with_suffix 将路径添加一个后缀 ''
+        path = path.with_suffix('')
+        # 模糊搜索和path\sep相似的路径, 存在一个list列表中 如['runs\\train\\exp', 'runs\\train\\exp1']
+        # f开头表示在字符串内支持大括号内的python表达式
+        dirs = glob.glob(f"{path}{sep}*")
+        # r的作用是去除转义字符       path.stem: 没有后缀的文件名 exp
+        # re 模糊查询模块  re.search: 查找dir中有字符串'exp/数字'的d   \d匹配数字
+        # matches [None, <re.Match object; span=(11, 15), match='exp1'>]  可以看到返回span(匹配的位置) match(匹配的对象)
+        matches = [re.search(rf"%s{sep}(\d+)" % path.stem, d) for d in dirs]
+        # i = [1]
+        i = [int(m.groups()[0]) for m in matches if m]  # indices
+        # 生成需要生成文件的exp后面的数字 n = max(i) + 1 = 2
+        n = max(i) + 1 if i else 1  # increment number
+        # 返回path runs/train/exp2
+        path = Path(f"{path}{sep}{n}{suffix}")  # update path
+
+    # path.suffix文件后缀   path.parent　路径的上级目录  runs/train/exp2
+    dir = path if path.suffix == '' else path.parent  # directory
+    if not dir.exists() and mkdir:  # mkdir 默认False 先不创建dir
+        dir.mkdir(parents=True, exist_ok=True)  # make directory
+    return path  # 返回runs/train/exp2
+
+def save_one_box(xyxy, im, file='image.jpg', gain=1.02, pad=10, square=False, BGR=False, save=True):
+    """用在detect.py文件中  由opt的save-crop参数控制执不执行
+    将预测到的目标从原图中扣出来 剪切好 并保存 会在runs/detect/expn下生成crops文件，将剪切的图片保存在里面
+    Save image crop as {file} with crop size multiple {gain} and {pad} pixels. Save and/or return crop
+    :params xyxy: 预测到的目标框信息 list 4个tensor x1 y1 x2 y2 左上角 + 右下角
+    :params im: 原图片 需要裁剪的框从这个原图上裁剪  nparray  (1080, 810, 3)
+    :params file: runs\detect\exp\crops\dog\bus.jpg
+    :params gain: 1.02 xyxy缩放因子
+    :params pad: xyxy pad一点点边界框 裁剪出来会更好看
+    :params square: 是否需要将xyxy放缩成正方形
+    :params BGR: 保存的图片是BGR还是RGB
+    :params save: 是否要保存剪切的目标框
+    """
+    xyxy = torch.tensor(xyxy).view(-1, 4)  # list -> Tensor [1, 4] = [x1 y1 x2 y2]
+    b = xyxy2xywh(xyxy)  # xyxy to xywh [1, 4] = [x y w h]
+    if square:  # 一般不需要rectangle to square
+        b[:, 2:] = b[:, 2:].max(1)[0].unsqueeze(1)  # attempt rectangle to square
+    # box wh * gain + pad  box*gain再加点pad 裁剪出来框更好看
+    b[:, 2:] = b[:, 2:] * gain + pad
+    xyxy = xywh2xyxy(b).long()  # xywh -> xyxy
+    # 将boxes的坐标(x1y1x2y2 左上角右下角)限定在图像的尺寸(img_shape hw)内
+    clip_coords(xyxy, im.shape)
+    # crop: 剪切的目标框hw
+    crop = im[int(xyxy[0, 1]):int(xyxy[0, 3]), int(xyxy[0, 0]):int(xyxy[0, 2]), ::(1 if BGR else -1)]
+    if save:
+        # 保存剪切的目标框
+        cv2.imwrite(str(increment_path(file, mkdir=True).with_suffix('.jpg')), crop)
+    return crop
+
+def check_python(minimum='3.6.2', required=True):
+    """用在下面的函数check_requirements中
+    检查当前的版本号是否满足最小版本号minimum
+    Check current python version vs. required python version
+    """
+    # cuurent: 当前使用的python版本号 如3.8.10
+    current = platform.python_version()
+    # 对比当前版本号和输出的至少的版本号(python版本一般是向下兼容的)
+    # 如果满足返回result=True 反正返回result=False
+    # pkg.parse_version(版本号)用于对比两个版本号的大小
+    result = pkg.parse_version(current) >= pkg.parse_version(minimum)
+    if required:
+        # 检查版本号满不满足最小版本号minimum
+        assert result, f'Python {minimum} required by YOLOv5, but Python {current} is currently installed'
+    return result
+
+def check_requirements(requirements='requirements.txt', exclude=()):
+    """用在train.py、val.py、detect.py等文件
+    用于检查已经安装的包是否满足requirements对应txt文件的要求
+    Check installed dependencies meet requirements (pass *.txt file or list of packages)
+    """
+    # 红色显示requirements单词  requirements:
+    prefix = colorstr('red', 'bold', 'requirements:')
+    # 检查当前的python版本符不符合最低版本要求   check python version
+    check_python()
+    # 解析requirements.txt中的所有包 解析成list 里面存放着一个个的pkg_resources.Requirement类
+    # 如: ['matplotlib>=3.2.2', 'numpy>=1.18.5', ……]
+    if isinstance(requirements, (str, Path)):  # requirements.txt file
+        # 将str字符串requirements转换成路径requirements
+        file = Path(requirements)
+        if not file.exists():  # requirements.txt文件不存在
+            print(f"{prefix} {file.resolve()} not found, check failed.")
+            return
+        # pkg_resources.parse_requirements:可以解析file中的每一条要求
+        # 每一行转换为pkg_resources.Requirement类并进行进一步处理
+        # 处理形式为调用每一行对应的name和specifier属性。前者代表需要包的名称，后者代表版本
+        # 返回list 每个元素是requirements.txt的一行 如: ['matplotlib>=3.2.2', 'numpy>=1.18.5', ……]
+        requirements = [f'{x.name}{x.specifier}' for x in pkg.parse_requirements(file.open()) if x.name not in exclude]
+    else:  # list or tuple of packages
+        requirements = [x for x in requirements if x not in exclude]
+
+    n = 0  # 统计下面程序更新包的个数 number of packages updates
+    # 依次检查环境中安装的包(及每个包对应的依赖包)是否满足requirements中的每一个最低要求安装包
+    for r in requirements:
+        try:
+            # pkg_resources.require(file) 返回对应包所需的所有依赖包 当这些包有哪个未安装或者版本不对的时候就会报错
+            pkg.require(r)
+        except Exception as e:
+            # 没有找到当前包r 或者 当前包r的版本低于最低要求
+            # 首先打印信息
+            print(f"{prefix} {r} not found and is required by YOLOv5, attempting auto-update...")
+            try:
+                # 再检查当前主机是否联网
+                assert check_online(), f"'pip install {r}' skipped (offline)"
+                # 最后创建一个子进程再执行pip指令并返回执行结果
+                print(check_output(f"pip install '{r}'", shell=True).decode())
+                n += 1  # 更新包的数量加1
+            except Exception as e:
+                print(f'{prefix} {e}')
+
+    if n:
+        # if packages updated 打印一写更新信息
+        source = file.resolve() if 'file' in locals() else requirements
+        s = f"{prefix} {n} package{'s' * (n > 1)} updated per {source}\n" \
+            f"{prefix} ⚠️ {colorstr('bold', 'Restart runtime or rerun command for updates to take effect')}\n"
+        print(emojis(s))  # emoji-safe
+
+def emojis(str=''):
+    """在下面的check_git_status、check_requirements等函数中使用
+    返回Windows系统可以安全、完整显示的字符串
+    Return platform-dependent emoji-safe version of string
+    """
+    # 通过.encode().decode()的组合忽略掉无法用ascii编码的内容(比如表情、图像)
+    return str.encode().decode('ascii', 'ignore') if platform.system() == 'Windows' else str
+
+def check_online():
+    """在下面的check_git_status、check_requirements等函数中使用
+    检查当前主机网络连接是否可用
+    """
+    import socket  # 导入socket模块 可解决基于tcp和ucp协议的网络传输
+    try:
+        # 连接到一个ip 地址addr("1.1.1.1")的TCP服务上, 端口号port=443 timeout=5 时限5秒 并返回一个新的套接字对象
+        socket.create_connection(("1.1.1.1", 443), 5)  # check host accessibility
+        # 没发现什么异常, 连接成功, 有网, 就返回True
+        return True
+    except OSError:
+        # 连接异常, 没网, 返回False
+        return False
+
+def is_docker():
+    """在后面的check_git_status和check_imshow等函数中被调用
+    查询当前环境是否是docker环境  Is environment a Docker container?
+    """
+    return Path('/workspace').exists()  # or Path('/.dockerenv').exists()
+def is_colab():
+    """用到后面的check_imshow函数中
+    检查当前环境是否是Google Colab环境  Is environment a Google Colab instance?
+    """
+    try:
+        import google.colab
+        return True
+    except Exception as e:
+        return False
+
+def check_imshow():
+    """用在detect.py中  使用webcam的时候调用
+    检查当前环境是否可以使用opencv.imshow显示图片
+    主要有两点限制: Docker环境 + Google Colab环境
+    """
+    # Check if environment supports image displays
+    try:
+        # 检查当前环境是否是一个Docker环境 cv2.imshow()不能再docker环境中使用
+        assert not is_docker(), 'cv2.imshow() is disabled in Docker environments'
+        # 检查当前环境是否是一个Google Colab环境 cv2.imshow()不能在Google Colab环境中使用
+        assert not is_colab(), 'cv2.imshow() is disabled in Google Colab environments'
+        # 初始化一张图片检查下opencv是否可用
+        cv2.imshow('test', np.zeros((1, 1, 3)))
+        cv2.waitKey(1)
+        cv2.destroyAllWindows()
+        cv2.waitKey(1)
+        return True
+    except Exception as e:
+        print(f'WARNING: Environment does not support cv2.imshow() or PIL Image.show() image displays\n{e}')
+        return False
+
+def colorstr(*input):
+    """用到下面的check_git_status、check_requirements等函数  train.py、val.py、detect.py等文件中
+    把输出的开头和结尾加上颜色  命令行输出显示会更加好看  如: colorstr('blue', 'hello world')
+    Colors a string https://en.wikipedia.org/wiki/ANSI_escape_code
+    """
+    # 如果输入长度为1, 就是没有选择颜色 则选择默认颜色设置 blue + bold
+    # args: 输入的颜色序列 string: 输入的字符串
+    *args, string = input if len(input) > 1 else ('blue', 'bold', input[0])
+    # 定义一些基础的颜色 和 字体设置
+    colors = {'black': '\033[30m',  # basic colors
+              'red': '\033[31m',
+              'green': '\033[32m',
+              'yellow': '\033[33m',
+              'blue': '\033[34m',
+              'magenta': '\033[35m',
+              'cyan': '\033[36m',
+              'white': '\033[37m',
+              'bright_black': '\033[90m',  # bright colors
+              'bright_red': '\033[91m',
+              'bright_green': '\033[92m',
+              'bright_yellow': '\033[93m',
+              'bright_blue': '\033[94m',
+              'bright_magenta': '\033[95m',
+              'bright_cyan': '\033[96m',
+              'bright_white': '\033[97m',
+              'end': '\033[0m',  # misc
+              'bold': '\033[1m',
+              'underline': '\033[4m'}
+    # 把输出的开头和结尾加上颜色  命令行输出显示会更加好看
+    return ''.join(colors[x] for x in args) + f'{string}' + colors['end']
 
 def plot_test_txt():
     x = np.loadtxt('test.txt', dtype=np.float32)

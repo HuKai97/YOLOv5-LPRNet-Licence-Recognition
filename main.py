@@ -8,15 +8,15 @@ from utils.utils import *
 from models.LPRNet import *
 
 def detect(save_img=False):
-    out, source, det_weights, rec_weights, view_img, save_txt, imgsz = \
-        opt.output, opt.source, opt.det_weights, opt.rec_weights,  opt.view_img, opt.save_txt, opt.img_size
+    classify, out, source, det_weights, rec_weights, view_img, save_txt, imgsz = \
+        opt.classify, opt.output, opt.source, opt.det_weights, opt.rec_weights,  opt.view_img, opt.save_txt, opt.img_size
     webcam = source == '0' or source.startswith('rtsp') or source.startswith('http') or source.endswith('.txt')
 
     # Initialize
     device = torch_utils.select_device(opt.device)
     if os.path.exists(out):
-        shutil.rmtree(out)  # delete output folder
-    os.makedirs(out)  # make new output folder
+        shutil.rmtree(out)  # delete rec_result folder
+    os.makedirs(out)  # make new rec_result folder
     half = device.type != 'cpu'  # half precision only supported on CUDA
 
     # Load yolov5 model
@@ -27,7 +27,6 @@ def detect(save_img=False):
         model.half()  # to FP16
 
     # Second-stage classifier  也就是rec 字符识别
-    classify = True
     if classify:
         modelc = LPRNet(lpr_max_len=8, phase=False, class_num=len(CHARS), dropout_rate=0).to(device)
         modelc.load_state_dict(torch.load(rec_weights, map_location=torch.device('cpu')))
@@ -64,11 +63,13 @@ def detect(save_img=False):
         pred = model(img, augment=opt.augment)[0]
         # Apply NMS
         pred = non_max_suppression(pred, opt.conf_thres, opt.iou_thres, classes=opt.classes, agnostic=opt.agnostic_nms)
-        t2 = torch_utils.time_synchronized()
+
 
         # Apply Classifier
         if classify:
             pred, plat_num = apply_classifier(pred, modelc, img, im0s)
+
+        t2 = torch_utils.time_synchronized()
 
         # Process detections
         for i, det in enumerate(pred):  # detections per image
@@ -91,7 +92,7 @@ def detect(save_img=False):
                     s += '%g %ss, ' % (n, names[int(c)])  # add to string
 
                 # Write results
-                for de,lic_plat in zip(det,plat_num):
+                for de, lic_plat in zip(det, plat_num):
                     # xyxy,conf,cls,lic_plat=de[:4],de[4],de[5],de[6:]
                     *xyxy, conf, cls=de
 
@@ -108,7 +109,7 @@ def detect(save_img=False):
                             #     continue
                             lb += CHARS[int(i)]
                         label = '%s %.2f' % (lb, conf)
-                        im0=plot_one_box(xyxy, im0, label=label, color=colors[int(cls)], line_thickness=3)
+                        im0 = plot_one_box(xyxy, im0, label=label, color=colors[int(cls)], line_thickness=3)
 
             # Print time (demo + NMS)
             print('%sDone. (%.3fs)' % (s, t2 - t1))
@@ -129,7 +130,7 @@ def detect(save_img=False):
                         if isinstance(vid_writer, cv2.VideoWriter):
                             vid_writer.release()  # release previous video writer
 
-                        fourcc = 'mp4v'  # output video codec
+                        fourcc = 'mp4v'  # rec_result video codec
                         fps = vid_cap.get(cv2.CAP_PROP_FPS)
                         w = int(vid_cap.get(cv2.CAP_PROP_FRAME_WIDTH))
                         h = int(vid_cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
@@ -146,10 +147,11 @@ def detect(save_img=False):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
+    parser.add_argument('--classify', nargs='+', type=str, default=True, help='True rec')
     parser.add_argument('--det-weights', nargs='+', type=str, default='./weights/yolov5_best.pt', help='model.pt path(s)')
     parser.add_argument('--rec-weights', nargs='+', type=str, default='./weights/lprnet_best.pth', help='model.pt path(s)')
     parser.add_argument('--source', type=str, default='./demo/images/', help='source')  # file/folder, 0 for webcam
-    parser.add_argument('--output', type=str, default='demo/output', help='output folder')  # output folder
+    parser.add_argument('--output', type=str, default='demo/rec_result', help='rec_result folder')  # rec_result folder
     parser.add_argument('--img-size', type=int, default=640, help='demo size (pixels)')
     parser.add_argument('--conf-thres', type=float, default=0.4, help='object confidence threshold')
     parser.add_argument('--iou-thres', type=float, default=0.5, help='IOU threshold for NMS')

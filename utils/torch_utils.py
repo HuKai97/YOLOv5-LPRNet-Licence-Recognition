@@ -142,7 +142,7 @@ def model_info(model, verbose=False):
 
 
 def load_classifier(name='resnet101', n=2):
-    # Loads a pretrained model reshaped to n-class output
+    # Loads a pretrained model reshaped to n-class rec_result
     model = models.__dict__[name](pretrained=True)
 
     # Display model properties
@@ -154,7 +154,7 @@ def load_classifier(name='resnet101', n=2):
     for x in [input_size, input_space, input_range, mean, std]:
         print(x + ' =', eval(x))
 
-    # Reshape output to n classes
+    # Reshape rec_result to n classes
     filters = model.fc.weight.shape[1]
     model.fc.bias = nn.Parameter(torch.zeros(n), requires_grad=True)
     model.fc.weight = nn.Parameter(torch.zeros(n, filters), requires_grad=True)

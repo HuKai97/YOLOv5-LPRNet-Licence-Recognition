@@ -442,7 +442,7 @@ def compute_loss(p, targets, model):  # predictions, targets, model
     if g > 0:
         BCEcls, BCEobj = FocalLoss(BCEcls, g), FocalLoss(BCEobj, g)
 
-    # per output
+    # per rec_result
     nt = 0  # number of targets
     np = len(p)  # number of outputs
     balance = [1.0, 1.0, 1.0]
@@ -478,7 +478,7 @@ def compute_loss(p, targets, model):  # predictions, targets, model
 
         lobj += BCEobj(pi[..., 4], tobj) * balance[i]  # obj loss
 
-    s = 3 / np  # output count scaling
+    s = 3 / np  # rec_result count scaling
     lbox *= h['giou'] * s
     lobj *= h['obj'] * s
     lcls *= h['cls'] * s
@@ -701,8 +701,8 @@ def crop_images_random(path='../images/', scale=0.50):  # from utils.utils impor
 def coco_single_class_labels(path='../coco/labels/train2014/', label_class=43):
     # Makes single-class coco datasets. from utils.utils import *; coco_single_class_labels()
     if os.path.exists('new/'):
-        shutil.rmtree('new/')  # delete output folder
-    os.makedirs('new/')  # make new output folder
+        shutil.rmtree('new/')  # delete rec_result folder
+    os.makedirs('new/')  # make new rec_result folder
     os.makedirs('new/labels/')
     os.makedirs('new/images/')
     for file in tqdm(sorted(glob.glob('%s/*.*' % path))):
@@ -907,7 +907,7 @@ def fitness(x):
 
 def output_to_target(output, width, height):
     """
-    Convert a YOLO model output to target format
+    Convert a YOLO model rec_result to target format
     [batch_id, class_id, x, y, w, h, conf]
     """
     if isinstance(output, torch.Tensor):
@@ -980,7 +980,7 @@ def plot_wh_methods():  # from utils.utils import *; plot_wh_methods()
     plt.xlim(left=-4, right=4)
     plt.ylim(bottom=0, top=6)
     plt.xlabel('input')
-    plt.ylabel('output')
+    plt.ylabel('rec_result')
     plt.legend()
     fig.tight_layout()
     fig.savefig('comparison.png', dpi=200)
@@ -1012,7 +1012,7 @@ def plot_images(images, targets, paths=None, fname='images.jpg', names=None, max
         h = math.ceil(scale_factor * h)
         w = math.ceil(scale_factor * w)
 
-    # Empty array for output
+    # Empty array for rec_result
     mosaic = np.full((int(ns * h), int(ns * w), 3), 255, dtype=np.uint8)
 
     # Fix class - colour map

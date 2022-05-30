@@ -19,7 +19,7 @@ class Detect(nn.Module):
 
     def forward(self, x):
         # x = x.copy()  # for profiling
-        z = []  # demo output
+        z = []  # demo rec_result
         self.training |= self.export
         for i in range(self.nl):
             bs, _, ny, nx = x[i].shape  # x(bs,255,20,20) to x(bs,3,20,20,85)
@@ -114,7 +114,7 @@ class Model(nn.Module):
                 print('%10.1f%10.0f%10.1fms %-40s' % (o, m.np, dt[-1], m.type))
 
             x = m(x)  # run
-            y.append(x if m.i in self.save else None)  # save output
+            y.append(x if m.i in self.save else None)  # save rec_result
 
         if profile:
             print('%.1fms total' % sum(dt))

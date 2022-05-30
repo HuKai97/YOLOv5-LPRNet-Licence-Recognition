@@ -408,7 +408,7 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
                     for j, x in enumerate(l):
                         f = '%s%sclassifier%s%g_%g_%s' % (p.parent.parent, os.sep, os.sep, x[0], j, p.name)
                         if not os.path.exists(Path(f).parent):
-                            os.makedirs(Path(f).parent)  # make new output folder
+                            os.makedirs(Path(f).parent)  # make new rec_result folder
 
                         b = x[1:] * [w, h, w, h]  # box
                         b[2:] = b[2:].max()  # rectangle to square
@@ -884,5 +884,5 @@ def imagelist2folder(path='data/coco_64img.txt'):  # from utils.datasets import 
 def create_folder(path='./new_folder'):
     # Create folder
     if os.path.exists(path):
-        shutil.rmtree(path)  # delete output folder
-    os.makedirs(path)  # make new output folder
+        shutil.rmtree(path)  # delete rec_result folder
+    os.makedirs(path)  # make new rec_result folder
