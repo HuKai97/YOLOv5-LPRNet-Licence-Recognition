@@ -869,10 +869,12 @@ def apply_classifier(x, model, img, im0):
                 im = transform(im)
                 ims.append(im)
 
+            # rec
             preds = model(torch.Tensor(ims).to(d.device))  # classifier prediction
 
             prebs = preds.cpu().detach().numpy()
 
+            # 对识别结果进行CTC后处理：删除序列中空白位置的字符，删除重复元素的字符
             preb_labels = list()
             for w in range(prebs.shape[0]):
 

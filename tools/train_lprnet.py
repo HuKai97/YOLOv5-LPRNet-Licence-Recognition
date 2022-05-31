@@ -52,15 +52,15 @@ def get_parser():
     parser = argparse.ArgumentParser(description='parameters to train net')
     parser.add_argument('--max_epoch', default=100, help='epoch to train the network')
     parser.add_argument('--img_size', default=[94, 24], help='the image size')
-    parser.add_argument('--train_img_dirs', default=r"", help='the train images path')
-    parser.add_argument('--test_img_dirs', default=r"", help='the test images path')
+    parser.add_argument('--train_img_dirs', default=r"K:\MyProject\datasets\ccpd\rec\train", help='the train images path')
+    parser.add_argument('--test_img_dirs', default=r"K:\MyProject\datasets\ccpd\rec\val", help='the test images path')
     parser.add_argument('--dropout_rate', default=0.5, help='dropout rate.')
     parser.add_argument('--learning_rate', default=0.01, help='base value of learning rate.')
     parser.add_argument('--lpr_max_len', default=8, help='license plate number max length.')
     parser.add_argument('--train_batch_size', default=128, help='training batch size.')
     parser.add_argument('--test_batch_size', default=128, help='testing batch size.')
     parser.add_argument('--phase_train', default=True, type=bool, help='train or test phase flag.')
-    parser.add_argument('--num_workers', default=8, type=int, help='Number of workers used in dataloading')
+    parser.add_argument('--num_workers', default=0, type=int, help='Number of workers used in dataloading')
     parser.add_argument('--cuda', default=True, type=bool, help='Use cuda to train model')
     parser.add_argument('--resume_epoch', default=0, type=int, help='resume iter for retraining')
     parser.add_argument('--save_interval', default=500, type=int, help='interval for save model state dict')
@@ -68,7 +68,7 @@ def get_parser():
     parser.add_argument('--momentum', default=0.9, type=float, help='momentum')
     parser.add_argument('--weight_decay', default=2e-5, type=float, help='Weight decay for SGD')
     parser.add_argument('--lr_schedule', default=[20, 40, 60, 80, 100], help='schedule for learning rate.')
-    parser.add_argument('--save_folder', default=r'',
+    parser.add_argument('--save_folder', default=r'../runs',
                         help='Location to save checkpoint models')
     parser.add_argument('--pretrained_model', default='', help='no pretrain')
 
@@ -86,13 +86,12 @@ def collate_fn(batch):
         labels.extend(label)
         lengths.append(length)
     labels = np.asarray(labels).flatten().astype(np.int)
-
     return (torch.stack(imgs, 0), torch.from_numpy(labels), lengths)
 
 def train():
     args = get_parser()
 
-    T_length = 18 # args.lpr_max_len
+    T_length = 18  # args.lpr_max_len
     epoch = 0 + args.resume_epoch
     loss_val = 0
 
@@ -139,7 +138,7 @@ def train():
     epoch_size = len(train_dataset) // args.train_batch_size
     max_iter = args.max_epoch * epoch_size
 
-    ctc_loss = nn.CTCLoss(blank=len(CHARS)-1, reduction='mean') # reduction: 'none' | 'mean' | 'sum'
+    ctc_loss = nn.CTCLoss(blank=len(CHARS)-1, reduction='mean')  # reduction: 'none' | 'mean' | 'sum'
 
     if args.resume_epoch > 0:
         start_iter = args.resume_epoch * epoch_size
@@ -186,6 +185,11 @@ def train():
         # print(log_probs.shape)
         # backprop
         optimizer.zero_grad()
+
+        # log_probs: 预测结果 [18, bs, 68]  其中18为序列长度  68为字典数
+        # labels: [93]
+        # input_lengths:  tuple   example: 000=18  001=18...   每个序列长度
+        # target_lengths: tuple   example: 000=7   001=8 ...   每个gt长度
         loss = ctc_loss(log_probs, labels, input_lengths=input_lengths, target_lengths=target_lengths)
         if loss.item() == np.inf:
             continue
